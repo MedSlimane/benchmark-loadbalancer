@@ -1,0 +1,258 @@
+Load Balancing Benchmark - Code Snippets and Execution Tables
+Source notebook: load_balancing_benchmark.ipynb
+
+============================================================
+1) Core Setup Snippet
+============================================================
+
+```python
+import time
+import random
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+
+SEED = 42
+np.random.seed(SEED)
+random.seed(SEED)
+
+N_SAMPLES = 1000
+N_TASKS = 12
+N_SERVERS = 3
+
+plt.style.use('ggplot')
+```
+
+============================================================
+2) Dataset Generation Snippet (1000 Samples)
+============================================================
+
+```python
+rng = np.random.default_rng(SEED)
+
+def generate_instance(local_rng, n_tasks=N_TASKS):
+    profile = local_rng.choice(['balanced', 'skewed', 'bursty'], p=[0.45, 0.35, 0.20])
+
+    if profile == 'balanced':
+        tasks = local_rng.normal(loc=50, scale=12, size=n_tasks)
+    elif profile == 'skewed':
+        tasks = local_rng.lognormal(mean=3.6, sigma=0.55, size=n_tasks)
+    else:
+        base = local_rng.normal(loc=30, scale=8, size=n_tasks)
+        spikes = local_rng.binomial(1, 0.18, size=n_tasks) * local_rng.normal(85, 20, size=n_tasks)
+        tasks = base + spikes
+
+    tasks = np.clip(np.rint(tasks), 1, 200).astype(int)
+    return tasks
+
+dataset = np.array([generate_instance(rng) for _ in range(N_SAMPLES)], dtype=int)
+```
+
+============================================================
+3) Algorithm Snippets
+============================================================
+
+Greedy (LPT):
+
+```python
+def greedy_lpt(tasks, m=N_SERVERS):
+    order = np.argsort(tasks)[::-1]
+    loads = np.zeros(m, dtype=int)
+    assignment = np.zeros(len(tasks), dtype=int)
+
+    for i in order:
+        s = int(np.argmin(loads))
+        loads[s] += int(tasks[i])
+        assignment[i] = s
+
+    return int(loads.max()), assignment
+```
+
+Local Search (initialized from Greedy, move/swap neighborhood):
+
+```python
+def local_search(tasks, m=N_SERVERS, max_iters=250):
+    best_ms, assignment = greedy_lpt(tasks, m)
+    assignment = assignment.copy()
+
+    for _ in range(max_iters):
+        improved = False
+        current_best_ms = best_ms
+        best_candidate = None
+
+        for i in range(len(tasks)):           # single-task move
+            src = assignment[i]
+            for dst in range(m):
+                if dst == src:
+                    continue
+                cand = assignment.copy()
+                cand[i] = dst
+                ms, _ = makespan_from_assignment(tasks, cand, m)
+                if ms < current_best_ms:
+                    current_best_ms = ms
+                    best_candidate = cand
+                    improved = True
+
+        for i in range(len(tasks)):           # pairwise swap
+            for j in range(i + 1, len(tasks)):
+                if assignment[i] == assignment[j]:
+                    continue
+                cand = assignment.copy()
+                cand[i], cand[j] = cand[j], cand[i]
+                ms, _ = makespan_from_assignment(tasks, cand, m)
+                if ms < current_best_ms:
+                    current_best_ms = ms
+                    best_candidate = cand
+                    improved = True
+
+        if improved and best_candidate is not None:
+            assignment = best_candidate
+            best_ms = current_best_ms
+        else:
+            break
+
+    return int(best_ms), assignment
+```
+
+Genetic Algorithm:
+
+```python
+def genetic_algorithm(tasks, m=N_SERVERS, pop_size=32, generations=50, mutation_rate=0.08, elite=2, seed=0):
+    local_rng = np.random.default_rng(seed)
+    n = len(tasks)
+
+    def fitness(assign):
+        return makespan_from_assignment(tasks, assign, m)[0]
+
+    def random_individual():
+        return local_rng.integers(0, m, size=n)
+
+    _, greedy_seed = greedy_lpt(tasks, m)
+    population = [greedy_seed.copy()] + [random_individual() for _ in range(pop_size - 1)]
+
+    def tournament_select(k=3):
+        picks = local_rng.choice(len(population), size=k, replace=False)
+        return min((population[i] for i in picks), key=fitness)
+
+    best = min(population, key=fitness).copy()
+    best_fit = fitness(best)
+
+    for _ in range(generations):
+        scored = sorted(population, key=fitness)
+        next_pop = [ind.copy() for ind in scored[:elite]]
+
+        while len(next_pop) < pop_size:
+            p1 = tournament_select()
+            p2 = tournament_select()
+            cut = local_rng.integers(1, n)
+            child = np.concatenate([p1[:cut], p2[cut:]]).copy()
+
+            mut_mask = local_rng.random(n) < mutation_rate
+            if mut_mask.any():
+                child[mut_mask] = local_rng.integers(0, m, size=mut_mask.sum())
+
+            next_pop.append(child)
+
+        population = next_pop
+        candidate = min(population, key=fitness)
+        candidate_fit = fitness(candidate)
+        if candidate_fit < best_fit:
+            best = candidate.copy()
+            best_fit = candidate_fit
+
+    return int(best_fit), best
+```
+
+============================================================
+4) Benchmarking Snippet (Runtime + Precision + Error Rate)
+============================================================
+
+```python
+results = pd.DataFrame(records)
+results['abs_error'] = results['predicted'] - results['optimal']
+results['rel_error'] = results['abs_error'] / results['optimal']
+results['is_exact'] = (results['predicted'] == results['optimal']).astype(int)
+
+summary = results.groupby('algorithm', as_index=False).agg(
+    avg_runtime_ms=('runtime_ms', 'mean'),
+    median_runtime_ms=('runtime_ms', 'median'),
+    precision=('is_exact', 'mean'),
+    error_rate=('rel_error', 'mean'),
+    worst_rel_error=('rel_error', 'max')
+)
+
+summary['precision_pct'] = 100 * summary['precision']
+summary['error_rate_pct'] = 100 * summary['error_rate']
+summary['worst_rel_error_pct'] = 100 * summary['worst_rel_error']
+```
+
+============================================================
+5) Execution Table - Dataset Statistics
+============================================================
+
++------------------+-----------+
+| metric           | value     |
++------------------+-----------+
+| samples          | 1000.0000 |
+| tasks_per_sample | 12.0000   |
+| servers          | 3.0000    |
+| mean_total_load  | 552.7410  |
+| std_total_load   | 93.8550   |
+| mean_difficulty  | 1.0336    |
++------------------+-----------+
+
+============================================================
+6) Execution Table - Test Subset Distribution (Stratified)
+============================================================
+
++----------------+-------+
+| difficulty_bin | count |
++----------------+-------+
+| 0              | 40    |
+| 1              | 40    |
+| 2              | 40    |
+| 3              | 40    |
+| 4              | 40    |
++----------------+-------+
+
+============================================================
+7) Execution Table - Benchmark Summary
+============================================================
+
++---------------+----------------+-------------------+---------------+----------------+---------------------+
+| algorithm     | avg_runtime_ms | median_runtime_ms | precision_pct | error_rate_pct | worst_rel_error_pct |
++---------------+----------------+-------------------+---------------+----------------+---------------------+
+| Genetic       | 33.4945        | 33.0872           | 26.0000       | 0.7998         | 3.5503              |
+| Greedy (LPT)  | 0.0129         | 0.0127            | 9.0000        | 2.1878         | 8.4848              |
+| Local Search  | 0.2104         | 0.2078            | 38.0000       | 0.6299         | 4.3750              |
++---------------+----------------+-------------------+---------------+----------------+---------------------+
+
+============================================================
+8) Execution Table - Sample Per-Run Rows
+============================================================
+
++-----------+--------------+---------+-----------+------------+-----------+-----------+
+| sample_id | algorithm    | optimal | predicted | runtime_ms | abs_error | rel_error |
++-----------+--------------+---------+-----------+------------+-----------+-----------+
+| 5         | Greedy (LPT) | 132     | 140       | 0.0150     | 8         | 6.0606    |
+| 5         | Local Search | 132     | 135       | 0.3237     | 3         | 2.2727    |
+| 5         | Genetic      | 132     | 134       | 33.3745    | 2         | 1.5152    |
+| 7         | Greedy (LPT) | 195     | 200       | 0.0140     | 5         | 2.5641    |
+| 7         | Local Search | 195     | 195       | 0.3090     | 0         | 0.0000    |
+| 7         | Genetic      | 195     | 196       | 33.1209    | 1         | 0.5128    |
+| 9         | Greedy (LPT) | 123     | 128       | 0.0146     | 5         | 4.0650    |
+| 9         | Local Search | 123     | 123       | 0.2242     | 0         | 0.0000    |
+| 9         | Genetic      | 123     | 125       | 34.7801    | 2         | 1.6260    |
+| 11        | Greedy (LPT) | 174     | 185       | 0.0132     | 11        | 6.3218    |
+| 11        | Local Search | 174     | 178       | 0.3007     | 4         | 2.2989    |
+| 11        | Genetic      | 174     | 179       | 32.5293    | 5         | 2.8736    |
++-----------+--------------+---------+-----------+------------+-----------+-----------+
+
+============================================================
+9) Short Interpretation
+============================================================
+
+- Greedy (LPT) is the fastest by a large margin, but it has the lowest precision and the highest average error.
+- Local Search offers the best precision and lowest average error with moderate runtime.
+- Genetic Algorithm gives competitive error quality but is significantly slower under current hyperparameters.
+- For low-latency systems, Greedy is suitable; for higher assignment quality, Local Search is the best balance in this run.

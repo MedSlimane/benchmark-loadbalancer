@@ -1,0 +1,4 @@
+algorithm,avg_runtime_ms,median_runtime_ms,precision_pct,error_rate_pct,worst_rel_error_pct
+Genetic,37.9103,36.012,26.0,0.7998,3.5503
+Greedy (LPT),0.0162,0.0145,9.0,2.1878,8.4848
+Local Search,0.2418,0.2269,38.0,0.6299,4.375

@@ -1,0 +1,13 @@
+sample_id,algorithm,optimal,predicted,runtime_ms,abs_error,rel_error_pct
+5,Greedy (LPT),132,140,0.0185,8,6.0606
+5,Local Search,132,135,0.3619,3,2.2727
+5,Genetic,132,134,42.1506,2,1.5152
+7,Greedy (LPT),195,200,0.0345,5,2.5641
+7,Local Search,195,195,0.4051,0,0.0
+7,Genetic,195,196,43.2046,1,0.5128
+9,Greedy (LPT),123,128,0.0165,5,4.065
+9,Local Search,123,123,0.2801,0,0.0
+9,Genetic,123,125,42.3229,2,1.626
+11,Greedy (LPT),174,185,0.0191,11,6.3218
+11,Local Search,174,178,0.3624,4,2.2989
+11,Genetic,174,179,41.1958,5,2.8736
